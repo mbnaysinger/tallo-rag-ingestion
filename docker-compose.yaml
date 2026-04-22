@@ -1,0 +1,9 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: tallo_rag
+      POSTGRES_USER: naysinger
+      POSTGRES_PASSWORD: naysinger
+    ports:
+      - "5432:5432"
