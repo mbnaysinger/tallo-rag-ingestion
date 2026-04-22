@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+tree-sitter
+tree-sitter-java
+tree-sitter-javascript
+tree-sitter-html
+tree-sitter-sql
+openai
+psycopg[binary]
+pgvector
+python-dotenv
+tenacity
+hypothesis
+pytest
+pytest-asyncio
+httpx

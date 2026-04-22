@@ -1,0 +1,10 @@
+mcp[cli]
+fastmcp
+psycopg[binary]
+pgvector
+openai
+python-dotenv
+tenacity
+hypothesis
+pytest
+pytest-asyncio
