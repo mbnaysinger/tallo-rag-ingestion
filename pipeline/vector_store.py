@@ -39,10 +39,20 @@ class Vector_Store:
         file_path: str,
         sha256_hex: str,
     ) -> None:
-        """Insere todos os registros de um arquivo em uma única transação.
-        Em caso de falha, realiza rollback e propaga a exceção."""
+        """Substitui todos os registros de um arquivo em uma única transação.
+
+        Remove primeiro todos os blocos existentes com o mesmo file_path (versão
+        anterior), depois insere os novos. Garante que apenas uma versão de cada
+        arquivo existe no banco a qualquer momento.
+        Em caso de falha, realiza rollback e propaga a exceção.
+        """
         try:
             with conn.cursor() as cur:
+                # Remove previous version of this file before inserting the new one
+                cur.execute(
+                    "DELETE FROM code_embeddings WHERE file_path = %s",
+                    (file_path,),
+                )
                 for block, embedding in zip(blocks, embeddings):
                     metadata = {
                         "node_type": block.node_type,
