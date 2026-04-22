@@ -50,12 +50,21 @@ def search_code(
     limit: int = 10,
     language: Optional[str] = None,
     node_type: Optional[str] = None,
+    expand_dependencies: bool = False,
+    dependency_depth: int = 1,
 ) -> list:
-    """Busca blocos de código semanticamente similares à query fornecida."""
+    """Busca blocos de código semanticamente similares à query fornecida.
+
+    Se expand_dependencies=True, expande automaticamente as dependências dos
+    resultados (Java: @Inject/extends/implements; CFML: cfinvoke/new) até
+    dependency_depth níveis, retornando o contexto completo da cadeia de chamadas.
+    """
     if not query:
         raise ValueError("query cannot be empty")
     if limit < 1 or limit > 50:
         raise ValueError(f"limit must be between 1 and 50, got: {limit}")
+    if dependency_depth < 1 or dependency_depth > 3:
+        raise ValueError(f"dependency_depth must be between 1 and 3, got: {dependency_depth}")
 
     t0 = time.monotonic()
     vectors = _embedding_client.embed_batch([query])
@@ -66,15 +75,37 @@ def search_code(
             conn, query_vector, limit, language=language, node_type=node_type
         )
 
+        dependencies: list = []
+        if expand_dependencies and results:
+            dep_blocks = _vector_store.expand_dependencies(conn, results, depth=dependency_depth)
+            dependencies = [
+                {
+                    "id": b.id,
+                    "content": b.content,
+                    "file_path": b.file_path,
+                    "score": None,
+                    "metadata": b.metadata,
+                    "_dependency": True,
+                }
+                for b in dep_blocks
+            ]
+
     execution_ms = (time.monotonic() - t0) * 1000
     _log(
         "search_code",
-        {"query": query, "limit": limit, "language": language, "node_type": node_type},
+        {
+            "query": query,
+            "limit": limit,
+            "language": language,
+            "node_type": node_type,
+            "expand_dependencies": expand_dependencies,
+            "dependency_depth": dependency_depth,
+        },
         execution_ms,
-        {"result_count": len(results)},
+        {"result_count": len(results), "dependency_count": len(dependencies)},
     )
 
-    return [
+    primary = [
         {
             "id": r.id,
             "content": r.content,
@@ -84,6 +115,8 @@ def search_code(
         }
         for r in results
     ]
+
+    return primary + dependencies
 
 
 @mcp.tool()

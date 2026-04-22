@@ -134,3 +134,110 @@ class MCP_VectorStore:
             )
             for row in rows
         ]
+
+    def find_blocks_by_class_name(
+        self,
+        conn: psycopg.Connection,
+        class_names: List[str],
+    ) -> List[FileBlock]:
+        """Busca blocos cujo metadata->>'class_name' está na lista fornecida.
+
+        Usado para expandir dependências Java (@Inject, extends, implements).
+        """
+        if not class_names:
+            return []
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, content, file_path, metadata
+                FROM code_embeddings
+                WHERE metadata->>'class_name' = ANY(%s)
+                ORDER BY file_path, (metadata->>'start_line')::int ASC
+                """,
+                (class_names,),
+            )
+            rows = cur.fetchall()
+        return [FileBlock(id=r[0], content=r[1], file_path=r[2], metadata=r[3]) for r in rows]
+
+    def find_blocks_by_component_name(
+        self,
+        conn: psycopg.Connection,
+        component_names: List[str],
+    ) -> List[FileBlock]:
+        """Busca blocos cujo metadata->>'component_name' está na lista fornecida.
+
+        Usado para expandir dependências CFML (cfinvoke, new ComponentName()).
+        """
+        if not component_names:
+            return []
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, content, file_path, metadata
+                FROM code_embeddings
+                WHERE metadata->>'component_name' = ANY(%s)
+                ORDER BY file_path, (metadata->>'start_line')::int ASC
+                """,
+                (component_names,),
+            )
+            rows = cur.fetchall()
+        return [FileBlock(id=r[0], content=r[1], file_path=r[2], metadata=r[3]) for r in rows]
+
+    def expand_dependencies(
+        self,
+        conn: psycopg.Connection,
+        blocks: List[SearchResult],
+        depth: int = 1,
+    ) -> List[FileBlock]:
+        """Expande dependências dos blocos fornecidos até `depth` níveis.
+
+        Para Java: resolve `injects`, `extends`, `implements` → busca por class_name.
+        Para CFML: resolve `calls_components` → busca por component_name.
+
+        Retorna blocos das dependências sem duplicatas, excluindo os já presentes
+        nos blocos originais.
+        """
+        seen_ids = {b.id for b in blocks}
+        result: List[FileBlock] = []
+
+        current_layer: List[dict] = [b.metadata for b in blocks]
+
+        for _ in range(depth):
+            java_targets: List[str] = []
+            cfml_targets: List[str] = []
+
+            for meta in current_layer:
+                # Java: injects + extends + implements
+                for key in ("injects", "implements"):
+                    for name in meta.get(key) or []:
+                        java_targets.append(name)
+                if meta.get("extends"):
+                    java_targets.append(meta["extends"])
+
+                # CFML: calls_components
+                for name in meta.get("calls_components") or []:
+                    cfml_targets.append(name)
+
+            next_layer: List[FileBlock] = []
+
+            if java_targets:
+                found = self.find_blocks_by_class_name(conn, list(set(java_targets)))
+                for b in found:
+                    if b.id not in seen_ids:
+                        seen_ids.add(b.id)
+                        result.append(b)
+                        next_layer.append(b)
+
+            if cfml_targets:
+                found = self.find_blocks_by_component_name(conn, list(set(cfml_targets)))
+                for b in found:
+                    if b.id not in seen_ids:
+                        seen_ids.add(b.id)
+                        result.append(b)
+                        next_layer.append(b)
+
+            if not next_layer:
+                break
+            current_layer = [b.metadata for b in next_layer]
+
+        return result
